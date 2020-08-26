@@ -1,7 +1,7 @@
 use crate::indexer::{Indexer, Key, KeyPrefix, Value};
 use crate::store::{IteratorDirection, RocksdbStore, Store};
 use ckb_jsonrpc_types::{
-    BlockNumber, BlockView, Capacity, CellOutput, JsonBytes, OutPoint, Script, Uint32,
+    BlockNumber, Capacity, CellOutput, JsonBytes, OutPoint, Script, Uint32,
 };
 use ckb_types::{core, packed, prelude::*, H256};
 use futures::future::Future;
@@ -65,11 +65,13 @@ impl Service {
         loop {
             if let Some((tip_number, tip_hash)) = indexer.tip().expect("get tip should be OK") {
                 match rpc_client
-                    .get_block_by_number((tip_number + 1).into())
+                    .get_block_by_number((tip_number + 1).into(), true)
                     .wait()
                 {
-                    Ok(Some(block)) => {
-                        let block: ckb_types::core::BlockView = block.into();
+                    Ok(Some(json_bytes)) => {
+                        let block =
+                            ckb_types::packed::Block::new_unchecked(json_bytes.into_bytes())
+                                .into_view();
                         if block.parent_hash() == tip_hash {
                             info!("append {}, {}", block.number(), block.hash());
                             indexer.append(&block).expect("append block should be OK");
@@ -88,10 +90,13 @@ impl Service {
                     }
                 }
             } else {
-                match rpc_client.get_block_by_number(0u64.into()).wait() {
-                    Ok(Some(block)) => indexer
-                        .append(&block.into())
-                        .expect("append block should be OK"),
+                match rpc_client.get_block_by_number(0u64.into(), true).wait() {
+                    Ok(Some(json_bytes)) => {
+                        let block =
+                            ckb_types::packed::Block::new_unchecked(json_bytes.into_bytes())
+                                .into_view();
+                        indexer.append(&block).expect("append block should be OK")
+                    }
                     Ok(None) => {
                         error!("ckb node returns an empty genesis block");
                         thread::sleep(self.poll_interval);
@@ -109,7 +114,11 @@ impl Service {
 #[rpc(client)]
 pub trait CkbRpc {
     #[rpc(name = "get_block_by_number")]
-    fn get_block_by_number(&self, _number: BlockNumber) -> Result<Option<BlockView>>;
+    fn get_block_by_number(
+        &self,
+        number: BlockNumber,
+        hex_format: bool,
+    ) -> Result<Option<JsonBytes>>;
 }
 
 #[rpc(server)]
